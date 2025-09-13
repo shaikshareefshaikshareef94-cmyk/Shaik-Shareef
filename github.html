@@ -1,0 +1,123 @@
+"use client";
+
+import React, { useState, useEffect, useMemo } from 'react';
+import { MoodEntry } from '@/entities/MoodEntry';
+import { WellnessResource } from '@/entities/WellnessResource';
+import { User } from '@/entities/User';
+import useAppLevelAuth from '@/hooks/useAppLevelAuth';
+import { useToast } from '@/components/ui/use-toast';
+import MoodCheckin from '../components/dashboard/MoodCheckin';
+import WellnessFeed from '../components/dashboard/WellnessFeed';
+import WeeklyMoodChart from '../components/dashboard/WeeklyMoodChart';
+import { subDays, format } from 'date-fns';
+
+export default function Dashboard() {
+  const { isLoggedIn } = useAppLevelAuth();
+  const { toast } = useToast();
+  const [currentUser, setCurrentUser] = useState<any>(null);
+  const [moodEntries, setMoodEntries] = useState<any[]>([]);
+  const [allResources, setAllResources] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (isLoggedIn) {
+      fetchData();
+    }
+  }, [isLoggedIn]);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [user, entries, resources] = await Promise.all([
+        User.me(),
+        MoodEntry.list("date:desc", 30),
+        WellnessResource.list()
+      ]);
+      setCurrentUser(user);
+      setMoodEntries(entries);
+      setAllResources(resources);
+    } catch (error) {
+      console.error("Failed to fetch dashboard data:", error);
+      toast({
+        title: "Error",
+        description: "Could not load your wellness data. Please try again later.",
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+  const todaysEntry = useMemo(() => moodEntries.find(entry => entry.date === todayStr), [moodEntries, todayStr]);
+
+  const handleCheckinSuccess = (newEntry: any) => {
+    setMoodEntries(prev => [newEntry, ...prev.filter(e => e.date !== newEntry.date)]);
+    toast({
+      title: "Check-in successful!",
+      description: "Your mood has been logged for the day.",
+    });
+  };
+
+  const weeklyMoodData = useMemo(() => {
+    const last7Days = Array.from({ length: 7 }).map((_, i) => format(subDays(new Date(), i), 'yyyy-MM-dd')).reverse();
+    return last7Days.map(date => {
+      const entry = moodEntries.find(e => e.date === date);
+      return {
+        date,
+        mood: entry?.mood || null,
+        score: entry ? MOOD_SCORES[entry.mood] : 0
+      };
+    });
+  }, [moodEntries]);
+
+  const MOOD_SCORES: { [key: string]: number } = {
+    happy: 5,
+    calm: 4,
+    neutral: 3,
+    sad: 2,
+    anxious: 1,
+    stressed: 0,
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-8">
+        <div className="h-10 bg-slate-200 rounded w-1/2 pulse-loader"></div>
+        <div className="h-48 bg-slate-100 rounded-lg pulse-loader"></div>
+        <div className="h-64 bg-slate-100 rounded-lg pulse-loader"></div>
+        <div className="h-96 bg-slate-100 rounded-lg pulse-loader"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 md:space-y-8 animate-fade-in">
+      <div>
+        <h1 className="text-3xl font-bold text-slate-800">
+          Welcome back, {currentUser?.firstName || 'there'}!
+        </h1>
+        <p className="text-slate-600 mt-1">
+          Ready to check in on your well-being today?
+        </p>
+      </div>
+
+      <MoodCheckin
+        todaysEntry={todaysEntry}
+        onSuccess={handleCheckinSuccess}
+      />
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
+        <div className="lg:col-span-2">
+          <WellnessFeed
+            latestMood={todaysEntry?.mood || moodEntries[0]?.mood}
+            resources={allResources}
+          />
+        </div>
+        <div className="lg:col-span-1">
+          <WeeklyMoodChart data={weeklyMoodData} />
+        </div>
+      </div>
+    </div>
+  );
+}
